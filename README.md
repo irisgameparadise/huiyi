@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="windows/brand/lockup-dark@2x.png">
-  <img src="windows/brand/lockup-light@2x.png" width="360" alt="會意注音 Huiyi">
-</picture>
+<img src="windows/brand/lockup@2x.png" width="360" alt="會意注音 Huiyi">
 
 **會意注音** 是給 Windows 用的注音輸入法：按錯鍵也能猜出你想打的字。辨識模型在你的電腦上執行，可以離線使用，打的字不會上傳。
 
