@@ -50,7 +50,8 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Huiyi\uninstall.ps1"
 | ← → ／ Home End | 在整句裡移到某個字 |
 | ↓ | 打開這個字的選單；選單裡 ↑ ↓ 移動、PgUp PgDn 翻頁、1–9／Enter／空白選字 |
 | Backspace | 刪掉最後一個注音；游標在句中時刪掉游標前的字 |
-| 單按 Shift、Ctrl＋空白 | 切換中／英（可在設定裡關掉） |
+| 單按 Shift | 切換中／英（可在設定裡關掉） |
+| Ctrl＋空白 | Windows 內建：整個開／關中文輸入法（關閉時打英文，工作列顯示「英」）；關閉時單按 Shift 會重新打開 |
 | Shift＋字母 | 打大寫英文，不切換模式 |
 | 聲母＋空白 | 直接打出注音符號（ㄅ 空白 → ㄅ） |
 | Shift＋，／Shift＋． | ，／。 |
@@ -66,7 +67,6 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Huiyi\uninstall.ps1"
 |---|---|---|
 | 輸入方式 | 整句直出（直接顯示整句；← → 回到某個字，↓ 改選） | 開 |
 | 按鍵 | 單按 Shift 切換中／英 | 開 |
-| | Ctrl＋空白鍵切換中／英 | 開 |
 | | CapsLock 開著時打英文（不勾：CapsLock 不影響注音） | 關 |
 | 注音 | 聲母加空白鍵直接打出注音符號 | 開 |
 | | 候選字最後附上注音本身（「注」） | 開 |

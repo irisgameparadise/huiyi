@@ -72,10 +72,11 @@ private:
     void sync_input_mode();                                          // the composer's mode -> the system's indicator
     void reload_settings();                                          // HKCU\Software\Huiyi -> the composer and the panel
     void toggle_mode();                                              // the indicator's click, as a Shift tap
-    bool ctrl_space(WPARAM w);                                       // Ctrl+Space, when the setting is on
     void show_menu(POINT at);                                        // the indicator's right click
-    ITfCompartment* mode_compartment();
-    DWORD mode_sink_ = TF_INVALID_COOKIE; bool setting_mode_ = false;
+    ITfCompartment* compartment(REFGUID g);
+    ITfCompartment* mode_compartment() { return compartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION); }
+    void open_keyboard();                                            // Windows turned the input method off (Ctrl+Space): on again, in 中
+    DWORD mode_sink_ = TF_INVALID_COOKIE, openclose_sink_ = TF_INVALID_COOKIE; bool setting_mode_ = false;
     InputModeButton* mode_button_ = nullptr;
 
     LONG refs_ = 1;
