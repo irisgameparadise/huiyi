@@ -1,0 +1,23 @@
+name: 功能建議 Feature request
+description: 想要的新功能、設定，或覺得哪裡可以更好用
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 現在遇到什麼狀況 What's the problem
+      description: 例如「打長句時前面的字一直跳」「希望能用 CapsLock 切中英」
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 希望怎麼做 What would help
+      description: 你想像的做法；可以參考其他輸入法（微軟注音、新酷音…）
+  - type: checkboxes
+    id: check
+    attributes:
+      label: 確認 Check
+      options:
+        - label: 我看過 README 的「已知限制與尚未完成」，這不在清單裡（或想補充清單裡的項目） I read the known-limitations list
+          required: true

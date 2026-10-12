@@ -1,0 +1,121 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="windows/brand/lockup-dark@2x.png">
+  <img src="windows/brand/lockup-light@2x.png" width="360" alt="會意注音 Huiyi">
+</picture>
+
+**會意注音** 是給 Windows 用的注音輸入法：按錯鍵也能猜出你想打的字。辨識模型在你的電腦上執行，可以離線使用，打的字不會上傳。
+
+**Huiyi** is a Zhuyin (Bopomofo) input method for Windows that reads through typos. The model runs on your PC, offline; nothing you type leaves it.
+
+> 會意注音是以 [AquaType](https://github.com/dio7153/AquaType)（Dio Hsieh，Mac 版）為基礎的獨立 Windows 版本，不是 AquaType 作者製作或背書的。辨識模型沿用 AquaType 的模型（CC BY-NC 4.0），**只限個人、非商業使用**。
+>
+> Huiyi is an independent Windows build based on [AquaType](https://github.com/dio7153/AquaType) by Dio Hsieh; it is not made or endorsed by the AquaType author. It uses AquaType's model (CC BY-NC 4.0): **personal, non-commercial use only**.
+
+## 功能
+
+- **打錯也讀得懂**：相鄰鍵按錯、漏打、多打，照樣列出正確的字句（AquaType 的雜訊通道解碼，在 CPU 上執行；支援 AVX2，舊電腦自動改用 SSE）。
+- **整句直出**（預設開啟）：組字區直接顯示整句；按 ← → 回到某個字，按 ↓ 叫出選單改選。
+- **發音容錯**：ㄣ／ㄥ、ㄢ／ㄤ、捲舌不分也找得到（例如「因該」→「應該」），每一組都可以關掉。
+- 單按 Shift 切換中／英；聲母加空白鍵直接打出注音符號；候選字最後附上注音本身。
+- **個人記憶**：記住你選過的字，只存在自己的電腦（`%USERPROFILE%\.huiyi`），設定裡可以一鍵清除。
+- 設定：在工作列「中／英」按右鍵、Windows 設定裡的「選項」，或開始功能表的「會意注音 設定」。
+
+## 安裝
+
+需要 Windows 11、64 位元（x64）。32 位元的應用程式也能使用。Windows 10 尚未測試。
+
+1. 到 [Releases](../../releases) 下載 `Huiyi-<版本>-win-x64.zip`，解壓縮。
+2. 用**系統管理員身分**開啟 PowerShell，切到解壓縮的資料夾，執行：
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install.ps1
+   ```
+3. 按 Win＋Space 選「會意注音」。已經開著的程式要重新開啟才會出現。
+
+移除：用系統管理員身分執行
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\Huiyi\uninstall.ps1"
+```
+個人記憶會保留；要一起刪除，刪掉 `%USERPROFILE%\.huiyi` 資料夾。
+
+## 使用建議
+
+- **整句打完再修改**：整句直出會邊打邊用後文修正前面的字，先打完再用 ← → 回去、按 ↓ 改選，比逐字選快。
+- **發音容錯**不需要的話，可以在設定裡個別關掉（ㄣ／ㄥ、ㄢ／ㄤ、捲舌），候選字會比較精準。
+- **第一次使用會比較慢**：引擎第一次啟動要載入模型；剛安裝時防毒軟體掃描新程式，可能要等幾十秒。之後每次登入會自動在背景啟動。
+- **輸入法清單裡沒出現**：已經開著的程式要重開；還是沒有就登出再登入。
+- **個人記憶**選錯了想重來：設定 →「清除個人記憶」。
+- 只想打注音符號：聲母後按空白鍵（例如ㄅ＋空白），或在候選字最後一組「注」裡選。
+
+## 已知限制與尚未完成
+
+會意注音目前是第一版（0.x），下面這些還沒做或還沒驗證，歡迎回報或一起做：
+
+| 狀態 | 項目 |
+|---|---|
+| 尚未測試 | Windows 10；ARM64 版 Windows（目前只有 x64）；以系統管理員身分執行的程式、全螢幕遊戲 |
+| 尚未完成 | 安裝程式只是 PowerShell 腳本，沒有 MSI；執行檔沒有數位簽章，下載時 Windows 可能會警告；沒有自動更新 |
+| 研究中 | 長句「浮動鎖定」（前面已穩定的字固定、只重算最後約 10 字）；中英混打；下一個字的預測（聯想詞） |
+| 已知 | 字表每個字只收一個讀音，多音字在備援候選裡可能找不到少用的讀音；移除後若有程式還在使用，要登出才刪得乾淨 |
+| 授權 | 模型為 CC BY-NC 4.0，所以會意注音不能用於商業用途 |
+
+## 回報問題與建議
+
+請到 [Issues](../../issues) 開新的 issue，並選對應的表單：
+
+- **問題回報**：請附上 Windows 版本、在哪個程式裡發生、按了哪些鍵、預期與實際的結果。
+- **功能建議**：說明想做什麼、現在卡在哪裡。
+
+引擎記錄在 `%LOCALAPPDATA%\Huiyi\engine.log`，只記狀態和錯誤，**不會記你打的字**。不過記錄裡的路徑會帶出 Windows 使用者名稱，貼上前請看一下。
+
+## 參與開發
+
+歡迎提 PR。修改前請先看 [CONTRIBUTING.md](CONTRIBUTING.md)：建置方式、測試、程式風格，以及各部分的授權（你貢獻的程式碼會依所在目錄的授權釋出）。
+
+## 從原始碼建置
+
+需要 Visual Studio 2022 以上的 C++ 建置工具（含 CMake、Ninja）。
+
+```powershell
+# 模型權重等大檔不放在 git 裡，從 release 取回並核對 SHA256
+powershell -File windows\install\restore_payload.ps1 -Release v0.1.0
+
+# 64 位元（在 x64 Native Tools 命令提示字元裡）
+cmake -S windows -B windows\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build windows\build
+# 32 位元輸入法 DLL，給 32 位元的程式用（在 x86 Native Tools 命令提示字元裡）
+cmake -S windows -B windows\build32 -G Ninja -DCMAKE_BUILD_TYPE=Release -DAQ_TIP_ONLY=ON
+cmake --build windows\build32 --target HuiyiTSF
+
+# 測試：輸入法的按鍵狀態機，接真的引擎
+windows\build\composer_test.exe windows\build\HuiyiEngine.exe packaging\payload data\char_to_keys.json
+
+# 打包成安裝資料夾 dist\Huiyi-win
+powershell -File windows\install\stage.ps1
+```
+
+## 架構
+
+- `windows/tip`：輸入法本體（TSF text service，`HuiyiTSF.dll`）與組字狀態機（`composer.cpp`）。
+- `windows/engine`：解碼引擎（`HuiyiEngine.exe`），輸入法透過 named pipe 跟它溝通。
+- `windows/settings`：設定視窗（`HuiyiSettings.exe`）。
+- `decoder/native`：AquaType 的解碼器，`cpu/` 是 Windows 用的 CPU 後端。
+- `packaging/payload`：模型與字典（大檔由 release 取回）。
+
+## 授權
+
+各部分授權不同，詳見 [windows/NOTICE-Huiyi.txt](windows/NOTICE-Huiyi.txt) 與 [NOTICE.txt](NOTICE.txt)：
+
+| 部分 | 授權 |
+|---|---|
+| 輸入法前端與設定視窗（`windows/tip`、`windows/settings`） | GPL-3.0 |
+| 引擎與解碼器（`windows/engine`、`decoder/native`） | Apache-2.0 |
+| 辨識模型 | CC BY-NC 4.0（非商業） |
+| 字典資料 | 依各來源授權（含 CC BY-SA 3.0、CC BY-ND 3.0 TW），見 NOTICE.txt |
+
+「會意注音」名稱與圖示不在上述授權範圍內。
+
+## 致謝
+
+- [AquaType](https://github.com/dio7153/AquaType)：Dio Hsieh。雜訊通道解碼引擎、模型與字典都來自這個專案。若在研究中使用，請引用 AquaType（[DOI 10.5281/zenodo.23289528](https://doi.org/10.5281/zenodo.23289528)）。
+- [鼠鬚管 Squirrel](https://github.com/rime/squirrel)／[RIME](https://rime.im)。
+- 本專案的 Windows 版開發有 AI 協作（Claude）。

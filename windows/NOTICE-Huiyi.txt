@@ -1,0 +1,42 @@
+會意注音 (Huiyi) for Windows
+Based on AquaType (https://github.com/dio7153/AquaType), Copyright (c) 2026 Dio Hsieh.
+Windows port: Copyright (c) 2026 the 會意注音 contributors.
+
+會意注音 is an independent Windows build of AquaType under a name of its own.  It is
+not made or endorsed by the AquaType author.  Like AquaType, it is made of parts under
+different licences; NOTICE.txt (AquaType's notice, in this folder) applies as well,
+and this file says how its parts map onto the Windows build.
+
+1. The text service (HuiyiTSF.dll, x86\HuiyiTSF.dll; source windows/tip) and the
+   settings window (HuiyiSettings.exe; source windows/settings) are distributed under
+   the GNU General Public License version 3 (LICENSE-GPL-3.0.txt).  Their composition
+   logic follows AquaType's input method, a modified version of Squirrel
+   (https://github.com/rime/squirrel) by 佛振 (Lotem) and the Squirrel contributors.
+   The text service's structure follows Microsoft's SampleIME
+   (https://github.com/microsoft/Windows-classic-samples, MIT License).
+   The complete corresponding source code is published with each release.
+
+2. The engine (HuiyiEngine.exe; source windows/engine) and the decoder
+   (aquadecoder*.dll; source decoder/native, including the CPU backend in
+   decoder/native/cpu) are licensed under the Apache License, Version 2.0
+   (LICENSE-Apache-2.0.txt).  The engine is a port of AquaType's engine
+   (Sources/AquaTypeEngine) to C++; the decoder files carry AquaType's code with
+   changes for a CPU backend.  The engine is a separate program that the text
+   service starts and talks to over a named pipe.
+
+3. The trained model (data\decoder) is AquaType's, unchanged, under the Creative
+   Commons Attribution-NonCommercial 4.0 International licence
+   (LICENSE-CC-BY-NC-4.0.txt).  It may be used, shared and adapted for
+   non-commercial purposes only, with attribution.  會意注音 is therefore for
+   personal, non-commercial use.
+
+4. The fallback dictionary and the character table (data\dict_store,
+   data\char_to_keys.json) are AquaType's, unchanged; their sources and licences
+   (including CC BY-SA 3.0 and CC BY-ND 3.0 TW) are listed in NOTICE.txt and
+   THIRD-PARTY-LICENSES.txt.
+
+5. JSON for Modern C++ (https://github.com/nlohmann/json), MIT License, is compiled
+   into the engine.
+
+The names "AquaType" and "會意注音" and their logos are not licensed by any of the
+licences above.  The 會意注音 logo and icons are original to this project.

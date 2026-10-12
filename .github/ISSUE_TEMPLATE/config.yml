@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全性問題 Security issue
+    url: https://github.com/irisgameparadise/huiyi/security/advisories/new
+    about: 請私下回報，不要公開開 issue。Please report privately.
+  - name: AquaType（Mac 版、模型與解碼器的原始專案）
+    url: https://github.com/dio7153/AquaType
+    about: Mac 版或模型本身的問題，請到原始專案。

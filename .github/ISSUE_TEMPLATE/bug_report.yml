@@ -1,0 +1,63 @@
+name: 問題回報 Bug report
+description: 輸入法打錯字、當掉、沒出現、候選窗位置不對…
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        謝謝回報！請盡量填完整，我們才重現得出來。**請不要貼上任何你不想公開的文字內容。**
+        Thanks! Please fill in as much as you can. **Do not paste any text you would not want public.**
+  - type: input
+    id: version
+    attributes:
+      label: 會意注音版本 Version
+      description: Release 的版本，例如 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本 Windows version
+      description: 設定 → 系統 → 系統資訊，例如 Windows 11 24H2 (26100)
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: 在哪個程式裡 Which app
+      description: 例如 記事本、Chrome、Word、LINE、某個遊戲
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎麼發生的 Steps
+      description: 按了哪些鍵（例如 ㄐㄧㄣ 空白 ㄊㄧㄢ），或做了什麼操作
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 預期與實際結果 Expected vs. actual
+      description: 你想打的字、實際出現的字，或發生了什麼事
+    validations:
+      required: true
+  - type: dropdown
+    id: settings
+    attributes:
+      label: 整句直出 Whole-sentence composition
+      options:
+        - 開啟（預設） On (default)
+        - 關閉 Off
+        - 不確定 Not sure
+  - type: textarea
+    id: log
+    attributes:
+      label: 引擎記錄（選填） Engine log (optional)
+      description: |
+        %LOCALAPPDATA%\Huiyi\engine.log 的最後幾行。這個檔不會記你打的字，但路徑會帶出 Windows 使用者名稱，貼上前可以先改掉。
+      render: text

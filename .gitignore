@@ -1,0 +1,19 @@
+# local working context, never public
+.local/
+
+# build output
+windows/build/
+windows/build32/
+dist/
+
+# payload binaries: restored by windows/install/restore_payload.ps1, pinned by packaging/payload/SHA256SUMS
+*.safetensors
+!packaging/payload/decoder/tables.safetensors
+*.bin
+*.aqds
+*.zip
+
+# editors and caches
+.vs/
+.vscode/
+__pycache__/
