@@ -8,6 +8,10 @@
 >
 > Huiyi is an independent Windows build based on [AquaType](https://github.com/dio7153/AquaType) by Dio Hsieh; it is not made or endorsed by the AquaType author. It uses AquaType's model (CC BY-NC 4.0): **personal, non-commercial use only**.
 
+<img src="windows/docs/demo.gif" width="760" alt="打錯一個鍵仍然打出「今天天氣很好」；「因該」打出「應該」；按 ← 回到「你」、↓ 改選「妳」">
+
+<sub>示意動畫：由 `windows/tip/tsf/demo_render.cpp` 讓實際的組字程式接真的引擎照腳本打字，候選窗用輸入法本身的繪圖程式畫出，再由 `windows/tools/demo_compose.py` 合成。</sub>
+
 ## 功能
 
 - **打錯也讀得懂**：相鄰鍵按錯、漏打、多打，照樣列出正確的字句（AquaType 的雜訊通道解碼，在 CPU 上執行；支援 AVX2，舊電腦自動改用 SSE）。
@@ -33,6 +37,47 @@
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\Huiyi\uninstall.ps1"
 ```
 個人記憶會保留；要一起刪除，刪掉 `%USERPROFILE%\.huiyi` 資料夾。
+
+## 按鍵操作
+
+鍵盤排列是標準（大千）注音，操作大多比照微軟注音。
+
+| 按鍵 | 作用 |
+|---|---|
+| 空白 | 一聲；聲調打完後再按，送出整句 |
+| Enter | 送出整句（選單開著時：選字） |
+| Esc | 清除正在打的字（選單開著時：關閉選單） |
+| ← → ／ Home End | 在整句裡移到某個字 |
+| ↓ | 打開這個字的選單；選單裡 ↑ ↓ 移動、PgUp PgDn 翻頁、1–9／Enter／空白選字 |
+| Backspace | 刪掉最後一個注音；游標在句中時刪掉游標前的字 |
+| 單按 Shift、Ctrl＋空白 | 切換中／英（可在設定裡關掉） |
+| Shift＋字母 | 打大寫英文，不切換模式 |
+| 聲母＋空白 | 直接打出注音符號（ㄅ 空白 → ㄅ） |
+| Shift＋，／Shift＋． | ，／。 |
+| \[ \] ／ Shift＋\[ \] | 「」／『』 |
+| \\ | 、 |
+| 工作列的「中／英」 | 左鍵切換；右鍵選單：切換、設定… |
+
+## 設定選單
+
+在工作列「中／英」按右鍵 →「設定…」，或 Windows 設定 → 時間與語言 → 語言 → 中文（台灣）→ 鍵盤 → 會意注音 →「選項」，或開始功能表的「會意注音 設定」。
+
+| 分類 | 項目 | 預設 |
+|---|---|---|
+| 輸入方式 | 整句直出（直接顯示整句；← → 回到某個字，↓ 改選） | 開 |
+| 按鍵 | 單按 Shift 切換中／英 | 開 |
+| | Ctrl＋空白鍵切換中／英 | 開 |
+| | CapsLock 開著時打英文（不勾：CapsLock 不影響注音） | 關 |
+| 注音 | 聲母加空白鍵直接打出注音符號 | 開 |
+| | 候選字最後附上注音本身（「注」） | 開 |
+| 發音容錯與選字 | ㄣ／ㄥ 不分（因該 → 應該） | 開 |
+| | ㄢ／ㄤ 不分 | 開 |
+| | 捲舌不分（ㄓㄗ、ㄔㄘ、ㄕㄙ） | 開 |
+| | 常用詞優先 | 開 |
+| 外觀 | 候選字大小（小／中／大） | 中 |
+| 個人記憶 | 清除個人記憶（會先確認，無法復原） | — |
+
+按「套用」或「確定」後立刻生效，不用重開程式。
 
 ## 跟 AquaType 的差異
 
