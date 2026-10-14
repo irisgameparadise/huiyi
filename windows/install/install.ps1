@@ -20,7 +20,7 @@ if ((Test-Path 'HKCU:\Software\AquaType') -and -not (Test-Path 'HKCU:\Software\H
 Get-Process HuiyiEngine -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Target\*" } | Stop-Process -Force   # only the installed one
 New-Item -ItemType Directory -Force $Target, "$Target\x86" | Out-Null
 # Loaded files cannot be overwritten, but they can be renamed; old renamed copies go once nothing holds them.
-foreach ($f in "$Target\HuiyiTSF.dll", "$Target\x86\HuiyiTSF.dll", "$Target\HuiyiEngine.exe", "$Target\aquadecoder.dll", "$Target\aquadecoder_avx2.dll", "$Target\aquadecoder_sse.dll", "$Target\HuiyiSettings.exe") {
+foreach ($f in "$Target\HuiyiTSF.dll", "$Target\x86\HuiyiTSF.dll", "$Target\HuiyiEngine.exe", "$Target\aquadecoder.dll", "$Target\aquadecoder_avx2.dll", "$Target\aquadecoder_sse.dll", "$Target\vcomp140.dll", "$Target\HuiyiSettings.exe") {
     if (Test-Path $f) { try { Remove-Item $f -Force } catch { Rename-Item $f ((Split-Path $f -Leaf) + ".old-$stamp") } }
 }
 Get-ChildItem $Target -Recurse -Filter '*.old-*' -ErrorAction SilentlyContinue | ForEach-Object { try { Remove-Item $_.FullName -Force } catch {} }

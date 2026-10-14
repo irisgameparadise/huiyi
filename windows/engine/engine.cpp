@@ -2,7 +2,8 @@
 // child process and talks to it in JSON lines over stdin/stdout - in C++, on the decoder's C API (aquadecoder.dll, the
 // CPU backend).  Every rule below is the Swift engine's; the comments there carry the reasons.
 //   HuiyiEngine --command serve-ui-jsonl --fallback-aqds F --fallback-manifest M
-//                  [--decoder-dir D] [--metallib L] [--char-to-keys C] [--state-dir S]
+//                  [--decoder-dir D] [--metallib L] [--char-to-keys C] [--char-readings R] [--state-dir S]
+//                  (R: a character's other readings, terra_pinyin.dict.yaml; by default the one beside C, if there)
 //   HuiyiEngine --check-char-coverage C
 //   HuiyiEngine --selftest [--raw K] --decoder-dir D ...
 //   HuiyiEngine --version
@@ -16,6 +17,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <optional>
@@ -103,6 +106,43 @@ struct CharKeyIndex {
         for (auto it = d.begin(); it != d.end(); ++it) by_raw[it.value().get<std::string>()].push_back(it.key());   // nlohmann's object is sorted by key, as the Swift side sorts
         count = d.size();
     }
+    // char_to_keys.json gives each character one reading; 行 typed ㄏㄤˊ or 蔚 typed ㄩˋ has no character there.  The
+    // other readings come from a Rime dictionary ("char<TAB>pinyin<TAB>share%", terra_pinyin): a reading with at least
+    // `min_share` percent (below that they are mostly tone sandhi, 一 yi2 1%) is added under its keys.  Pinyin is turned
+    // into keys by what the table itself types for the characters that have one reading only.  A reading used less than
+    // the table's own sorts after the characters of its frequency tier (ranked / known / other) that read it as their table reading.
+    std::set<std::string> minor;      // raw + '\t' + char
+    size_t added = 0;
+    void add_readings(const std::wstring& path, double min_share = 5.0) {
+        std::map<std::string, std::vector<std::pair<std::string, double>>> readings; std::map<std::string, std::string> table;
+        for (auto& [raw, chs] : by_raw) for (auto& ch : chs) table[ch] = raw;
+        const std::string text = read_file(path); bool body = false; size_t at = 0;
+        while (at < text.size()) {
+            size_t end = text.find('\n', at); if (end == std::string::npos) end = text.size();
+            std::string line = text.substr(at, end - at); at = end + 1; if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (!body) { body = line.rfind("...", 0) == 0; continue; }
+            if (line.empty() || line[0] == '#') continue;
+            const size_t t1 = line.find('\t'); if (t1 == std::string::npos) continue;
+            const size_t t2 = line.find('\t', t1 + 1);
+            const std::string ch = line.substr(0, t1), py = line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1);
+            if (code_points(ch).size() != 1 || !table.count(ch)) continue;
+            double share = -1; if (t2 != std::string::npos && line.back() == '%') share = std::atof(line.c_str() + t2 + 1);
+            readings[ch].push_back({py, share});
+        }
+        std::map<std::string, std::map<std::string, int>> votes;
+        for (auto& [ch, rs] : readings) if (rs.size() == 1) votes[rs[0].first][table[ch]]++;
+        std::map<std::string, std::string> keys_of;
+        for (auto& [py, v] : votes) keys_of[py] = std::max_element(v.begin(), v.end(), [](auto& a, auto& b) { return a.second < b.second; })->first;
+        for (auto& [ch, rs] : readings) {
+            if (rs.size() < 2) continue;
+            const std::string& own = table[ch]; double own_share = 0; std::map<std::string, double> by_keys;
+            for (auto& [py, share] : rs) { auto k = keys_of.find(py); if (k == keys_of.end()) continue; const double s = share < 0 ? 100 : share;
+                if (k->second == own) own_share = std::max(own_share, s); else by_keys[k->second] = std::max(by_keys[k->second], s); }
+            for (auto& [keys, s] : by_keys) { if (s < min_share) continue;
+                by_raw[keys].push_back(ch); added++; if (s < own_share) minor.insert(keys + "\t" + ch); }
+        }
+    }
+    bool is_minor(const std::string& raw, const std::string& ch) const { return minor.count(raw + "\t" + ch) != 0; }
     const std::vector<std::string>& chars(const std::string& raw) const { static const std::vector<std::string> none; auto it = by_raw.find(raw); return it == by_raw.end() ? none : it->second; }
     std::vector<std::string> coverage_gaps() const {
         static const std::string keyboard = "1234567890-qwertyuiop asdfghjkl;zxcvbnm,./"; std::vector<std::string> missing;
@@ -143,6 +183,7 @@ const std::map<char, std::vector<char>>& neighbours() {
 }  // namespace bopomofo
 
 // ---------------------------------------------------------------- the decoder session
+static bool g_decode_aborted = false;   // the last aq_decode was stopped by aq_abort (only the dispatcher's worker decodes)
 class DecoderSession {
 public:
     aq_decoder* handle = nullptr; std::vector<std::string> syllable_keys;
@@ -158,7 +199,9 @@ public:
         char* out = aq_decode(handle, raw.c_str(), ctx.empty() ? nullptr : ctx.c_str());
         if (!out) { log(std::string("[engine] aq_decode failed: ") + aq_last_error()); return std::nullopt; }
         std::string s(out); aq_free(out);
-        try { json p = json::parse(s); if (p.contains("candidates") && p["candidates"].is_array()) return p["candidates"]; } catch (...) {}
+        try { json p = json::parse(s);
+              if (p.value("aborted", false)) { g_decode_aborted = true; return std::nullopt; }   // newer keys came: nobody wants this answer
+              if (p.contains("candidates") && p["candidates"].is_array()) return p["candidates"]; } catch (...) {}
         log("[engine] compose JSON unexpected: " + std::to_string(s.size()) + " bytes"); return std::nullopt;
     }
     int candidate_budget() const { return 63; }
@@ -166,7 +209,19 @@ public:
         if (keys.empty()) return {}; char* out = aq_readings(handle, keys.c_str()); if (!out) return {};
         std::string s(out); aq_free(out); try { return json::parse(s).get<std::vector<int32_t>>(); } catch (...) { return {}; }
     }
-    void end_sentence() { aq_reset(handle); }
+    // The decoder picks its tier (fast / accurate) from how long keys take, between sentences.  The tier it ends on is kept
+    // in the state folder, so the next start begins on what this machine needed instead of measuring it again.
+    std::wstring tier_path; int saved_tier = -1;
+    void restore_tier(const std::wstring& path) {
+        tier_path = path;
+        try { const std::string s = read_file(path); if (s.rfind("fast", 0) == 0) saved_tier = 1; else if (s.rfind("accurate", 0) == 0) saved_tier = 0; } catch (...) {}
+        if (saved_tier >= 0) aq_set_tier(handle, saved_tier);
+    }
+    void keep_tier() {
+        const int t = aq_tier(handle); if (t == saved_tier || tier_path.empty()) return;
+        if (FILE* f = _wfopen(tier_path.c_str(), L"wb")) { std::fputs(t ? "fast\n" : "accurate\n", f); std::fclose(f); saved_tier = t; log(std::string("[engine] tier ") + (t ? "fast" : "accurate")); }
+    }
+    void end_sentence() { aq_reset(handle); keep_tier(); }
     int32_t char_id(const std::string& ch) { return aq_char_id(handle, ch.c_str()); }
 
     static std::string previous_sentence(const std::string& committed) {
@@ -270,7 +325,7 @@ struct Engine {
                 model_syllables.push_back({*k, end + 1 == raw_count ? std::nullopt : std::optional<int>(end + 1)}); }
         }
         struct Word { std::string text; std::optional<int> consumed; double weight; }; std::vector<Word> words;
-        struct Ch { std::string text; std::optional<int> consumed; }; std::vector<Ch> chars;
+        struct Ch { std::string text; std::optional<int> consumed; bool minor = false; }; std::vector<Ch> chars;
         auto add_words = [&](const std::vector<Piece>& pieces) {
             if (pieces.size() < 2) return;
             for (size_t count = std::min<size_t>(pieces.size(), 6); count >= 2; count--) { std::string piece; for (size_t i = 0; i < count; i++) piece += pieces[i].keys;
@@ -282,15 +337,15 @@ struct Engine {
         { std::vector<Piece> ps; for (size_t i = 0; i < syllables.size(); i++) ps.push_back({syllables[i].keys, consumed(i + 1)}); add_words(ps); }
         if (words.empty()) add_words(model_syllables);
         std::vector<std::string> typing;
-        if (!syllables.empty() && char_index && !char_index->chars(syllables[0].keys).empty()) { for (auto& c : char_index->chars(syllables[0].keys)) chars.push_back({c, consumed(1)}); }
+        if (!syllables.empty() && char_index && !char_index->chars(syllables[0].keys).empty()) { for (auto& c : char_index->chars(syllables[0].keys)) chars.push_back({c, consumed(1), char_index->is_minor(syllables[0].keys, c)}); }
         else if (syllables.empty() && !(typing = every_tone(pending)).empty()) { for (auto& c : typing) chars.push_back({c, std::nullopt}); }
-        else if (!model_syllables.empty() && char_index && !char_index->chars(model_syllables[0].keys).empty()) { for (auto& c : char_index->chars(model_syllables[0].keys)) chars.push_back({c, model_syllables[0].consumed}); }
+        else if (!model_syllables.empty() && char_index && !char_index->chars(model_syllables[0].keys).empty()) { for (auto& c : char_index->chars(model_syllables[0].keys)) chars.push_back({c, model_syllables[0].consumed, char_index->is_minor(model_syllables[0].keys, c)}); }
         else if (!syllables.empty()) { for (auto& c : chars_with_tolerance(syllables[0].keys)) chars.push_back({c, consumed(1)}); }
         std::stable_sort(words.begin(), words.end(), [&](const Word& a, const Word& b) { int ca = a.consumed.value_or(raw_count), cb = b.consumed.value_or(raw_count); if (ca != cb) return ca > cb; return a.weight > b.weight; });
         for (auto& w : words) add(w.text, src_aqds, w.consumed);
         if (freq && freq->ok) std::stable_sort(chars.begin(), chars.end(), [&](const Ch& a, const Ch& b) {
             int ca = a.consumed.value_or(raw_count), cb = b.consumed.value_or(raw_count); if (ca != cb) return ca > cb;
-            auto oa = freq->order(a.text), ob = freq->order(b.text); if (oa.first != ob.first) return oa.first < ob.first; if (oa.second != ob.second) return oa.second < ob.second; return a.text < b.text; });
+            auto oa = freq->order(a.text), ob = freq->order(b.text); if (oa.first != ob.first) return oa.first < ob.first; if (a.minor != b.minor) return b.minor; if (oa.second != ob.second) return oa.second < ob.second; return a.text < b.text; });
         for (auto& c : chars) add(c.text, src_chars, c.consumed);
 
         ojson out; out["schema"] = response_schema; out["client_id"] = req.client_id; out["client_generation"] = req.generation; out["raw_keys"] = req.raw_keys;
@@ -382,9 +437,46 @@ static std::optional<ojson> handle_line(Engine& engine, const std::string& line)
     }
 }
 
+// ---- one worker answers every line, from every connection, in order.  The decoder is single-threaded, so a request
+// that arrives while the same client's previous one is still decoding stops that one (aq_abort: the decoder halts at its
+// next step and its answer is dropped), and a request with a newer one from the same client already waiting is skipped:
+// the person stopped typing on the newest keys, and that answer should not wait behind answers nobody will look at.
+// Commits and other lines are never skipped.  The between-keystroke housekeeping runs after each answer is written.
+class Dispatcher {
+public:
+    using Reply = std::function<void(const std::string&)>;
+    explicit Dispatcher(Engine& e) : engine_(e) {}
+    void push(std::string line, Reply reply) {
+        std::string client; bool request = false;
+        try { const json j = json::parse(line); request = j.value("schema", std::string()) == contract::request_schema; client = j.value("client_id", std::string()); } catch (...) {}
+        std::lock_guard<std::mutex> g(m_);
+        if (request && running_request_ && running_client_ == client && engine_.decoder) aq_abort(engine_.decoder->handle);
+        q_.push_back({std::move(line), std::move(reply), std::move(client), request}); cv_.notify_one();
+    }
+    void run() {                                   // the worker; returns once stopped and drained
+        for (;;) {
+            Job job;
+            {   std::unique_lock<std::mutex> l(m_); cv_.wait(l, [&] { return !q_.empty() || stop_; }); if (q_.empty()) return;
+                job = std::move(q_.front()); q_.pop_front();
+                if (job.request && std::any_of(q_.begin(), q_.end(), [&](const Job& o) { return o.request && o.client == job.client; })) continue;
+                running_request_ = job.request; running_client_ = job.client; }
+            g_decode_aborted = false; std::optional<ojson> reply = handle_line(engine_, job.line); const bool aborted = g_decode_aborted;
+            { std::lock_guard<std::mutex> g(m_); running_request_ = false; running_client_.clear(); }
+            if (reply && !aborted) { try { job.reply(reply->dump() + "\n"); } catch (...) {} }
+            if (!aborted && g_maintain) aq_maintain(g_maintain);
+        }
+    }
+    void stop() { std::lock_guard<std::mutex> g(m_); stop_ = true; cv_.notify_all(); }
+private:
+    struct Job { std::string line; Reply reply; std::string client; bool request = false; };
+    Engine& engine_; std::mutex m_; std::condition_variable cv_; std::deque<Job> q_;
+    bool stop_ = false, running_request_ = false; std::string running_client_;
+};
+
 // ---- serve-pipe: one engine for every input method instance of this user.  Each app that loads the text service
-// connects to the pipe; requests from all of them are answered one at a time (the decoder is single-threaded), each on
-// the connection it came in on, and the between-keystroke housekeeping runs after the reply is written.
+// connects to the pipe; a thread per connection reads its lines into the dispatcher, whose worker writes each answer
+// back on the connection it came in on.  Reads and writes of one connection run on different threads, so the pipe is
+// overlapped: a synchronous handle would hold the answer's write behind the pending read.
 static std::wstring default_pipe_name() {
     wchar_t user[256]; DWORD n = 256; if (!GetUserNameW(user, &n)) wcscpy_s(user, L"user");
     return std::wstring(L"\\\\.\\pipe\\HuiyiEngine-") + user;
@@ -401,31 +493,46 @@ static bool pipe_security(SECURITY_ATTRIBUTES* sa) {
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr)) return false;
     sa->nLength = sizeof(*sa); sa->lpSecurityDescriptor = sd; sa->bInheritHandle = FALSE; return true;   // kept for the life of the process
 }
+// One overlapped read (op 0), write (1) or connect (2), waited for.
+static bool pipe_io(HANDLE p, int op, void* buf, DWORD n, DWORD* done) {
+    OVERLAPPED ov{}; ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr); if (!ov.hEvent) return false;
+    DWORD got = 0; BOOL ok = op == 0 ? ReadFile(p, buf, n, nullptr, &ov) : op == 1 ? WriteFile(p, buf, n, nullptr, &ov) : ConnectNamedPipe(p, &ov);
+    const DWORD e = ok ? ERROR_SUCCESS : GetLastError();
+    if (!ok && op == 2 && e == ERROR_PIPE_CONNECTED) ok = TRUE;
+    else if (!ok && e == ERROR_IO_PENDING) ok = GetOverlappedResult(p, &ov, &got, TRUE);
+    else if (ok) GetOverlappedResult(p, &ov, &got, TRUE);
+    CloseHandle(ov.hEvent); if (done) *done = got; return ok != FALSE;
+}
+struct PipeConnection {                            // closed once neither its reader nor a pending answer holds it
+    HANDLE p; std::mutex write_lock;
+    explicit PipeConnection(HANDLE h) : p(h) {}
+    ~PipeConnection() { DisconnectNamedPipe(p); CloseHandle(p); }
+    void write(const std::string& s) { std::lock_guard<std::mutex> g(write_lock); DWORD w = 0; pipe_io(p, 1, (void*)s.data(), (DWORD)s.size(), &w); }
+};
 static int serve_pipe(Engine& engine, const std::wstring& name) {
     SECURITY_ATTRIBUTES sa{}; const bool secured = pipe_security(&sa);
-    std::mutex lock; bool first = true;
+    Dispatcher dispatcher(engine); std::thread worker([&] { dispatcher.run(); });
+    bool first = true;
     while (true) {
-        HANDLE p = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0), PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+        HANDLE p = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0), PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                                     PIPE_UNLIMITED_INSTANCES, 1 << 16, 1 << 16, 0, secured ? &sa : nullptr);
         if (p == INVALID_HANDLE_VALUE) {
-            if (first && GetLastError() == ERROR_ACCESS_DENIED) { log("[engine] another engine already serves " + narrow(name)); return 0; }
+            if (first && GetLastError() == ERROR_ACCESS_DENIED) { log("[engine] another engine already serves " + narrow(name)); dispatcher.stop(); worker.join(); return 0; }
             log("[engine] cannot create pipe (error " + std::to_string(GetLastError()) + ")"); Sleep(1000); continue;
         }
         if (first) { log("[engine] serving " + narrow(name)); first = false; }
-        if (!ConnectNamedPipe(p, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) { CloseHandle(p); continue; }
-        std::thread([&engine, &lock, p] {
+        if (!pipe_io(p, 2, nullptr, 0, nullptr)) { CloseHandle(p); continue; }
+        auto conn = std::make_shared<PipeConnection>(p);
+        std::thread([&dispatcher, conn] {
             std::string pending; char buf[8192]; DWORD got = 0;
-            while (ReadFile(p, buf, sizeof buf, &got, nullptr) && got > 0) {
+            while (pipe_io(conn->p, 0, buf, sizeof buf, &got) && got > 0) {
                 pending.append(buf, got); size_t nl;
                 while ((nl = pending.find('\n')) != std::string::npos) {
                     std::string line = pending.substr(0, nl); pending.erase(0, nl + 1);
                     if (!line.empty() && line.back() == '\r') line.pop_back(); if (line.empty()) continue;
-                    std::optional<ojson> reply; { std::lock_guard<std::mutex> g(lock); reply = handle_line(engine, line); }
-                    if (reply) { std::string s = reply->dump() + "\n"; DWORD w = 0; if (!WriteFile(p, s.data(), (DWORD)s.size(), &w, nullptr)) break; }
-                    std::lock_guard<std::mutex> g(lock); if (g_maintain) aq_maintain(g_maintain);
+                    dispatcher.push(std::move(line), [conn](const std::string& s) { conn->write(s); });
                 }
             }
-            DisconnectNamedPipe(p); CloseHandle(p);
         }).detach();
     }
 }
@@ -447,7 +554,15 @@ static Engine make_engine(const Args& a) {
     CreateDirectoryW(widen(state).c_str(), nullptr);                    // the user's profile is already private to them
     if (const char* p = a.get("--char-to-keys")) { try { e.char_index = std::make_unique<CharKeyIndex>(widen(p)); } catch (...) {} }
     if (!e.char_index) log("[engine] char_to_keys.json not found; the third source has no character table");
-    if (const char* d = a.get("--decoder-dir")) { e.decoder = DecoderSession::open(d, a.get("--metallib")); if (e.decoder) e.decoder->warm_up(); }
+    if (e.char_index) {                                                 // the other readings: --char-readings, or the dictionary beside char_to_keys.json
+        std::wstring r = a.get("--char-readings") ? widen(a.get("--char-readings")) : widen(a.get("--char-to-keys"));
+        if (!a.get("--char-readings")) { const size_t slash = r.find_last_of(L"\\/"); r = (slash == std::wstring::npos ? L"" : r.substr(0, slash + 1)) + L"terra_pinyin.dict.yaml"; }
+        if (GetFileAttributesW(r.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            try { e.char_index->add_readings(r); log("[engine] other readings: " + std::to_string(e.char_index->added)); }
+            catch (const std::exception& ex) { log(std::string("[engine] other readings not read: ") + ex.what()); }
+        }
+    }
+    if (const char* d = a.get("--decoder-dir")) { e.decoder = DecoderSession::open(d, a.get("--metallib")); if (e.decoder) { e.decoder->restore_tier(widen(state) + L"\\tier"); e.decoder->warm_up(); } }
     if (e.decoder) g_maintain = e.decoder->handle;
     if (const char* d = a.get("--decoder-dir")) { e.freq = std::make_unique<CharFrequency>(widen(d)); if (!e.freq->ok) e.freq.reset(); }
     if (!e.freq) log("[engine] no character frequency table; the third source falls back to code-point order");
@@ -477,12 +592,16 @@ static int run(int argc, char** argv) {
     // The engine answers a user who is waiting: above-normal priority, the counterpart of the Mac engine's user-interactive QoS.
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
     if (command == "serve-pipe") return serve_pipe(engine, a.get("--pipe") ? widen(a.get("--pipe")) : default_pipe_name());
+    // serve-ui-jsonl: lines on stdin, answers on stdout, through the same dispatcher as the pipe
+    Dispatcher dispatcher(engine); std::thread worker([&] { dispatcher.run(); });
     std::string line;
     while (std::getline(std::cin, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (auto reply = handle_line(engine, line)) { try { emit(*reply); } catch (...) {} }
-    }    return 0;
+        dispatcher.push(std::move(line), [](const std::string& s) { std::fwrite(s.data(), 1, s.size(), stdout); std::fflush(stdout); });
+    }
+    dispatcher.stop(); worker.join();
+    return 0;
 }
 
 int main(int argc, char** argv) {

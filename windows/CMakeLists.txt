@@ -22,13 +22,14 @@ target_link_libraries(HuiyiEngine PRIVATE aquadecoder nlohmann_json::nlohmann_js
 target_compile_definitions(HuiyiEngine PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
   target_compile_options(HuiyiEngine PRIVATE /O2 /utf-8 /EHsc /W3)
+  set_property(TARGET HuiyiEngine PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")   # runs on machines without the VC++ redistributable; the decoder's memory crosses only through aq_free
 endif()
 # No console window: the text service and the logon entry start it in the background.  Pipes still work for stdio mode (tests).
 target_link_options(HuiyiEngine PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 # the dispatcher and both builds it picks from, next to the engine: a target of its own, so a rebuilt decoder is copied
 # even when the engine itself did not relink
 add_custom_target(aq_decoder_copy ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:aquadecoder>
-  $<TARGET_FILE:aquadecoder_avx2> $<TARGET_FILE:aquadecoder_sse> $<TARGET_FILE_DIR:HuiyiEngine> DEPENDS aquadecoder)
+  $<TARGET_FILE:aquadecoder_avx2> $<TARGET_FILE:aquadecoder_sse> ${AQ_RUNTIME_DLLS} $<TARGET_FILE_DIR:HuiyiEngine> DEPENDS aquadecoder)
 endif()
 
 # the text service's core, without TSF, and its test against the real engine
