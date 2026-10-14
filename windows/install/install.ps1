@@ -4,7 +4,7 @@
 # 2. registers the text service, 64-bit and 32-bit (regsvr32)
 # 3. adds "會意注音" to this user's keyboards (zh-TW)
 # 4. starts the engine at logon (HKCU Run); until then the first app that uses it starts it
-# An AquaType install is removed first (the two would share the keyboard list); its settings come over.
+# An AquaType install is left alone: the two have their own names, folders, settings and engines, and both can be used.
 param([string]$Target = "$env:ProgramFiles\Huiyi")
 $ErrorActionPreference = 'Stop'
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -12,10 +12,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $src = $PSScriptRoot
 $clsid = '{A532764A-4ED6-44D9-A303-F8EA759DACA6}'; $prof = '{35C74BD7-A144-441B-AD5F-C8E0D321969A}'
 $stamp = Get-Date -Format yyyyMMddHHmmss
-
-$aqua = "$env:ProgramFiles\AquaType\uninstall.ps1"
-if (Test-Path $aqua) { & powershell -NoProfile -ExecutionPolicy Bypass -File $aqua | Out-Null }
-if ((Test-Path 'HKCU:\Software\AquaType') -and -not (Test-Path 'HKCU:\Software\Huiyi')) { Copy-Item 'HKCU:\Software\AquaType' 'HKCU:\Software\Huiyi' }
 
 Get-Process HuiyiEngine -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Target\*" } | Stop-Process -Force   # only the installed one
 New-Item -ItemType Directory -Force $Target, "$Target\x86" | Out-Null
