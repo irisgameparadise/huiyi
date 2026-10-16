@@ -36,6 +36,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <sddl.h>
+#include <shlobj.h>
 
 using namespace aqw;
 using json = nlohmann::json;
@@ -477,18 +478,22 @@ private:
 // connects to the pipe; a thread per connection reads its lines into the dispatcher, whose worker writes each answer
 // back on the connection it came in on.  Reads and writes of one connection run on different threads, so the pipe is
 // overlapped: a synchronous handle would hold the answer's write behind the pending read.
-static std::wstring default_pipe_name() {
-    wchar_t user[256]; DWORD n = 256; if (!GetUserNameW(user, &n)) wcscpy_s(user, L"user");
-    return std::wstring(L"\\\\.\\pipe\\HuiyiEngine-") + user;
-}
-// Owner and SYSTEM full access; AppContainer apps (the Store apps the text service is loaded into) read/write; low
-// integrity allowed to write, since browsers' sandboxed processes run there.
-static bool pipe_security(SECURITY_ATTRIBUTES* sa) {
-    HANDLE tok = nullptr; if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) return false;
+// The user's SID, not their name: names can be reused across machines' accounts, and the text service checks that
+// the pipe it reaches is owned by this SID.
+static std::wstring user_sid() {
+    HANDLE tok = nullptr; if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) return {};
     DWORD len = 0; GetTokenInformation(tok, TokenUser, nullptr, 0, &len); std::vector<uint8_t> buf(len);
-    const bool ok = GetTokenInformation(tok, TokenUser, buf.data(), len, &len) != 0; CloseHandle(tok); if (!ok) return false;
-    LPWSTR sid = nullptr; if (!ConvertSidToStringSidW(((TOKEN_USER*)buf.data())->User.Sid, &sid)) return false;
-    const std::wstring sddl = L"D:P(A;;GA;;;SY)(A;;GA;;;" + std::wstring(sid) + L")(A;;GRGW;;;AC)S:(ML;;NW;;;LW)"; LocalFree(sid);
+    const bool ok = len && GetTokenInformation(tok, TokenUser, buf.data(), len, &len) != 0; CloseHandle(tok); if (!ok) return {};
+    LPWSTR sid = nullptr; if (!ConvertSidToStringSidW(((TOKEN_USER*)buf.data())->User.Sid, &sid)) return {};
+    std::wstring s = sid; LocalFree(sid); return s;
+}
+static std::wstring default_pipe_name() { return L"\\\\.\\pipe\\HuiyiEngine-" + user_sid(); }
+// Owned by the user (the text service refuses a pipe owned by anyone else); owner and SYSTEM full access; AppContainer
+// apps (the Store apps the text service is loaded into) read/write; low integrity allowed to write, since browsers'
+// sandboxed processes run there.
+static bool pipe_security(SECURITY_ATTRIBUTES* sa) {
+    const std::wstring sid = user_sid(); if (sid.empty()) return false;
+    const std::wstring sddl = L"O:" + sid + L"D:P(A;;GA;;;SY)(A;;GA;;;" + sid + L")(A;;GRGW;;;AC)S:(ML;;NW;;;LW)";
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr)) return false;
     sa->nLength = sizeof(*sa); sa->lpSecurityDescriptor = sd; sa->bInheritHandle = FALSE; return true;   // kept for the life of the process
@@ -511,11 +516,12 @@ struct PipeConnection {                            // closed once neither its re
 };
 static int serve_pipe(Engine& engine, const std::wstring& name) {
     SECURITY_ATTRIBUTES sa{}; const bool secured = pipe_security(&sa);
+    if (!secured) { log("[engine] cannot build the pipe's security descriptor"); return 1; }   // never serve keys on a default DACL
     Dispatcher dispatcher(engine); std::thread worker([&] { dispatcher.run(); });
     bool first = true;
     while (true) {
         HANDLE p = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0), PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                    PIPE_UNLIMITED_INSTANCES, 1 << 16, 1 << 16, 0, secured ? &sa : nullptr);
+                                    PIPE_UNLIMITED_INSTANCES, 1 << 16, 1 << 16, 0, &sa);
         if (p == INVALID_HANDLE_VALUE) {
             if (first && GetLastError() == ERROR_ACCESS_DENIED) { log("[engine] another engine already serves " + narrow(name)); dispatcher.stop(); worker.join(); return 0; }
             log("[engine] cannot create pipe (error " + std::to_string(GetLastError()) + ")"); Sleep(1000); continue;
@@ -550,7 +556,9 @@ static void migrate_memory(const std::string& state) {
 static Engine make_engine(const Args& a) {
     Engine e;
     e.fallback = std::make_unique<AQDSFallbackStore>(widen(a.required("--fallback-aqds")), widen(a.required("--fallback-manifest")));
-    std::string state; if (const char* s = a.get("--state-dir")) state = s; else { char* home = nullptr; size_t n = 0; _dupenv_s(&home, &n, "USERPROFILE"); state = std::string(home ? home : ".") + "\\.huiyi"; free(home); migrate_memory(state); }
+    std::string state; if (const char* s = a.get("--state-dir")) state = s;
+    else { PWSTR home = nullptr;                                        // the profile folder in UTF-16: a user name in Chinese survives
+        state = (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &home)) ? narrow(home) : std::string(".")) + "\\.huiyi"; CoTaskMemFree(home); migrate_memory(state); }
     CreateDirectoryW(widen(state).c_str(), nullptr);                    // the user's profile is already private to them
     if (const char* p = a.get("--char-to-keys")) { try { e.char_index = std::make_unique<CharKeyIndex>(widen(p)); } catch (...) {} }
     if (!e.char_index) log("[engine] char_to_keys.json not found; the third source has no character table");
@@ -604,7 +612,12 @@ static int run(int argc, char** argv) {
     return 0;
 }
 
-int main(int argc, char** argv) {
+// wmain: the arguments arrive in UTF-16 and are kept as UTF-8, as every path in here is (main would hand over the
+// ANSI code page, and a user folder in Chinese would come out wrong).
+int wmain(int wargc, wchar_t** wargv) {
+    std::vector<std::string> args; for (int i = 0; i < wargc; i++) args.push_back(narrow(wargv[i]));
+    std::vector<char*> ptrs; for (auto& s : args) ptrs.push_back(&s[0]); ptrs.push_back(nullptr);
+    const int argc = wargc; char** argv = ptrs.data();
     _setmode(_fileno(stdin), _O_BINARY); _setmode(_fileno(stdout), _O_BINARY);
     // --log FILE: stderr to a file, for an engine started without a console (the text service starts it detached)
     for (int i = 1; i + 1 < argc; i++) if (std::string(argv[i]) == "--log") { FILE* f = nullptr; _wfreopen_s(&f, widen(argv[i + 1]).c_str(), L"a", stderr); }

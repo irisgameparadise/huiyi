@@ -1,5 +1,6 @@
-// The text service's connection to the engine: the per-user named pipe of HuiyiEngine --command serve-pipe.  The
-// engine is started (windowless, detached) when the pipe is not there; replies are read on a thread of their own and
+// The text service's connection to the engine: the per-user named pipe of HuiyiEngine --command serve-pipe, named by
+// the user's SID and accepted only when this user owns it.  The engine is started (windowless, detached) when the pipe
+// is not there and this app runs at the user's ordinary level; replies are read on a thread of their own and
 // handed to the composer through a queue, with an optional window message to say one has arrived.
 #pragma once
 #include <condition_variable>
@@ -29,8 +30,9 @@ public:
     static std::wstring default_pipe_name();
 private:
     bool connect(uint32_t wait_ms);
+    bool trusted(HANDLE pipe) const;
     void reader(HANDLE pipe);
-    std::wstring pipe_name_; EngineLaunch launch_;
+    std::wstring pipe_name_; EngineLaunch launch_; bool may_start_;
     std::mutex m_; std::condition_variable cv_; std::deque<std::string> lines_;
     HANDLE pipe_ = INVALID_HANDLE_VALUE; std::thread reader_;
     HANDLE stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);   // set: the reader cancels its read and ends

@@ -235,7 +235,7 @@ void Composer::request(const std::string& raw) {
 
 void Composer::send_request(const std::string& raw) {
     if (context_seq_ != seq_) {                                           // captured once per generation, then frozen
-        std::wstring w = widen(host_.context_before_caret());
+        std::wstring w = host_.secure_input() ? std::wstring() : widen(host_.context_before_caret());   // a password field's text stays in the app
         if (w.size() > 256) w.erase(0, w.size() - 256);
         if (!w.empty() && w[0] >= 0xDC00 && w[0] <= 0xDFFF) w.erase(0, 1); // never start inside a surrogate pair
         std::string s = narrow(w);

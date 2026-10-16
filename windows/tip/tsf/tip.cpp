@@ -136,7 +136,10 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* tm, TfClientId id, DWORD flag
     WNDCLASSEXW wc{sizeof wc}; wc.lpfnWndProc = msg_proc; wc.hInstance = g_module; wc.lpszClassName = kMsgClass; RegisterClassExW(&wc);
     // a hidden top-level window rather than a message-only one: the theme change is broadcast only to top-level windows
     msg_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, kMsgClass, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, g_module, this);
-    engine_ = std::make_unique<aqtip::PipeEngine>(aqtip::PipeEngine::default_pipe_name(), aqtip::default_launch(g_module));
+    // On the sign-in, lock and UAC screens (secure mode) the text service runs as SYSTEM: it composes bopomofo only, with
+    // no engine to start or reach, and nothing in its menu starts a program.
+    if (secure_mode()) engine_ = std::make_unique<aqtip::PipeEngine>(std::wstring(), aqtip::EngineLaunch{});
+    else engine_ = std::make_unique<aqtip::PipeEngine>(aqtip::PipeEngine::default_pipe_name(), aqtip::default_launch(g_module));
     engine_->set_notify(msg_hwnd_, WM_ENGINE);
     host_ = std::make_unique<HostImpl>(); host_->ts = this; host_->secure = (flags & TF_TMAE_SECUREMODE) != 0;
     composer_ = std::make_unique<aqtip::Composer>(*host_, *engine_);
@@ -181,13 +184,12 @@ void TextService::show_menu(POINT at) {
     HMENU m = CreatePopupMenu(); if (!m) return;
     enum { kToggle = 1, kSettings = 2 };
     AppendMenuW(m, MF_STRING, kToggle, (composer_->ascii_mode() || !keyboard_open()) ? L"切換到中文" : L"切換到英文");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, kSettings, L"設定…");
+    if (!secure_mode()) { AppendMenuW(m, MF_SEPARATOR, 0, nullptr); AppendMenuW(m, MF_STRING, kSettings, L"設定…"); }
     SetForegroundWindow(msg_hwnd_);                  // so the menu closes when the person clicks elsewhere
     const int cmd = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, msg_hwnd_, nullptr);
     DestroyMenu(m);
     if (cmd == kToggle) toggle_mode();
-    else if (cmd == kSettings) open_settings_app();
+    else if (cmd == kSettings && !secure_mode()) open_settings_app();
 }
 
 void open_settings_app() {
@@ -202,7 +204,7 @@ void open_settings_app() {
 }
 
 STDMETHODIMP TextService::GetDisplayName(BSTR* name) { if (!name) return E_INVALIDARG; *name = SysAllocString(L"會意注音 設定"); return *name ? S_OK : E_OUTOFMEMORY; }
-STDMETHODIMP TextService::Show(HWND, LANGID, REFGUID) { open_settings_app(); return S_OK; }
+STDMETHODIMP TextService::Show(HWND, LANGID, REFGUID) { if (secure_mode()) return E_ACCESSDENIED; open_settings_app(); return S_OK; }
 
 // The input mode compartment is what Windows shows as 中/英 on the taskbar, and clicking that indicator changes it.
 ITfCompartment* TextService::compartment(REFGUID g) {
@@ -295,7 +297,8 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* ctx, WPARAM w, LPARAM l, BOOL* e
     aqtip::Result r = aqtip::Result::Pass;
     run(ctx, [&](TfEditCookie ec) {
         host_->ec = ec; host_->ctx = ctx;
-        if (!composer_->composing()) { host_->context = context_before_caret(ec, ctx); host_->secure = (flags_ & TF_TMAE_SECUREMODE) || secure_input(ec, ctx); }
+        if (!composer_->composing()) {                                  // a password field's text is not read at all
+            host_->secure = secure_mode() || secure_input(ec, ctx); host_->context = host_->secure ? std::string() : context_before_caret(ec, ctx); }
         r = composer_->key(k);
         after_edit(ec, ctx); sync_input_mode();
         host_->ec = TF_INVALID_EDIT_COOKIE; host_->ctx = nullptr;

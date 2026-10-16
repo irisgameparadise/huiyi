@@ -1,11 +1,52 @@
 #include "engine_link.h"
+#include <aclapi.h>
+#include <sddl.h>
 #include <shlobj.h>
+#include <vector>
 
 namespace aqtip {
+namespace {
+std::vector<uint8_t> token_info(TOKEN_INFORMATION_CLASS c) {
+    HANDLE tok = nullptr; std::vector<uint8_t> buf;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) return buf;
+    DWORD len = 0; GetTokenInformation(tok, c, nullptr, 0, &len);
+    if (len) { buf.resize(len); if (!GetTokenInformation(tok, c, buf.data(), len, &len)) buf.clear(); }
+    CloseHandle(tok); return buf;
+}
+// The engine runs with the rights of the app that starts it, so only an app at the user's ordinary level starts it: not
+// an elevated one (the engine would run as administrator), nor a low-integrity or sandboxed one.  Those apps connect to
+// the engine the user's other apps (or the sign-in start) brought up.
+bool may_start_engine() {
+    const auto elev = token_info(TokenElevation);
+    if (elev.size() < sizeof(TOKEN_ELEVATION) || ((TOKEN_ELEVATION*)elev.data())->TokenIsElevated) return false;
+    const auto il = token_info(TokenIntegrityLevel);
+    if (il.empty()) return false;
+    PSID sid = ((TOKEN_MANDATORY_LABEL*)il.data())->Label.Sid;
+    const DWORD rid = *GetSidSubAuthority(sid, *GetSidSubAuthorityCount(sid) - 1);
+    return rid >= SECURITY_MANDATORY_MEDIUM_RID && rid < SECURITY_MANDATORY_HIGH_RID;
+}
+}  // namespace
 
 std::wstring PipeEngine::default_pipe_name() {
-    wchar_t user[256]; DWORD n = 256; if (!GetUserNameW(user, &n)) wcscpy_s(user, L"user");
-    return std::wstring(L"\\\\.\\pipe\\HuiyiEngine-") + user;
+    const auto user = token_info(TokenUser); LPWSTR sid = nullptr;
+    if (user.empty() || !ConvertSidToStringSidW(((TOKEN_USER*)user.data())->User.Sid, &sid)) return {};   // no name: no engine
+    std::wstring name = std::wstring(L"\\\\.\\pipe\\HuiyiEngine-") + sid; LocalFree(sid); return name;
+}
+
+// The pipe must be the engine's: owned by this user (another account could create a pipe of this name first and read
+// the keys), and, where this app may look at the process serving it, that process must be the engine beside us.
+bool PipeEngine::trusted(HANDLE h) const {
+    const auto user = token_info(TokenUser); if (user.empty()) return false;
+    PSID owner = nullptr; PSECURITY_DESCRIPTOR sd = nullptr;
+    if (GetSecurityInfo(h, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr, nullptr, &sd) != ERROR_SUCCESS) return false;
+    const bool mine = owner && EqualSid(owner, ((TOKEN_USER*)user.data())->User.Sid); LocalFree(sd);
+    if (!mine) return false;
+    ULONG pid = 0; if (launch_.exe.empty() || !GetNamedPipeServerProcessId(h, &pid)) return true;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return true;                                                      // a sandboxed app may not look; the owner is checked
+    wchar_t path[MAX_PATH * 2]; DWORD n = MAX_PATH * 2;
+    const bool same = QueryFullProcessImageNameW(proc, 0, path, &n) && CompareStringOrdinal(path, (int)n, launch_.exe.c_str(), (int)launch_.exe.size(), TRUE) == CSTR_EQUAL;
+    CloseHandle(proc); return same;
 }
 
 EngineLaunch default_launch(HMODULE self) {
@@ -25,7 +66,7 @@ EngineLaunch default_launch(HMODULE self) {
     return l;
 }
 
-PipeEngine::PipeEngine(std::wstring pipe, EngineLaunch launch) : pipe_name_(std::move(pipe)), launch_(std::move(launch)) {}
+PipeEngine::PipeEngine(std::wstring pipe, EngineLaunch launch) : pipe_name_(std::move(pipe)), launch_(std::move(launch)), may_start_(may_start_engine()) {}
 
 // The pipe is opened for overlapped I/O: a synchronous handle serialises a write behind the reader's pending read, and
 // the read only completes when the engine answers the request that write is carrying.
@@ -38,12 +79,15 @@ PipeEngine::~PipeEngine() {
 }
 bool PipeEngine::connect(uint32_t wait_ms) {
     if (pipe_ != INVALID_HANDLE_VALUE) return true;
+    if (pipe_name_.empty()) return false;                                        // no engine (the sign-in and lock screens)
     // A connection that just failed is not tried again for a few seconds: the keys of an app that can neither reach
     // nor start the engine must not each wait for it.
     if (GetTickCount64() - last_failed_ < 3000) return false;
     const ULONGLONG deadline = GetTickCount64() + wait_ms;
     while (true) {
-        HANDLE h = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        // SECURITY_IDENTIFICATION: whatever serves the pipe may learn who we are, never act as us
+        HANDLE h = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
+        if (h != INVALID_HANDLE_VALUE && !trusted(h)) { CloseHandle(h); last_failed_ = GetTickCount64(); return false; }
         if (h != INVALID_HANDLE_VALUE) {
             if (reader_.joinable()) reader_.join();                              // the previous connection's reader has ended with it
             ResetEvent(stop_);
@@ -52,7 +96,7 @@ bool PipeEngine::connect(uint32_t wait_ms) {
         }
         const DWORD e = GetLastError();
         if (e == ERROR_PIPE_BUSY) { if (!WaitNamedPipeW(pipe_name_.c_str(), 200)) {} }
-        else if (e == ERROR_FILE_NOT_FOUND && !launch_.exe.empty() && GetTickCount64() - last_launch_ > 10000) {
+        else if (e == ERROR_FILE_NOT_FOUND && !launch_.exe.empty() && may_start_ && GetTickCount64() - last_launch_ > 10000) {
             // Not running: start it, at most once every ten seconds.  An app sandboxed so that it cannot start
             // processes simply finds no engine and composes bopomofo until one is running.
             last_launch_ = GetTickCount64();

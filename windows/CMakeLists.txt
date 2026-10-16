@@ -18,14 +18,14 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../decoder/native/cpu decoder)
 
 add_executable(HuiyiEngine engine/engine.cpp engine/aqds.cpp engine/memory.cpp engine/util.cpp tip/settings.cpp)
 target_include_directories(HuiyiEngine PRIVATE tip)
-target_link_libraries(HuiyiEngine PRIVATE aquadecoder nlohmann_json::nlohmann_json bcrypt advapi32)
+target_link_libraries(HuiyiEngine PRIVATE aquadecoder nlohmann_json::nlohmann_json bcrypt advapi32 shell32 ole32)
 target_compile_definitions(HuiyiEngine PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
   target_compile_options(HuiyiEngine PRIVATE /O2 /utf-8 /EHsc /W3)
   set_property(TARGET HuiyiEngine PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")   # runs on machines without the VC++ redistributable; the decoder's memory crosses only through aq_free
 endif()
 # No console window: the text service and the logon entry start it in the background.  Pipes still work for stdio mode (tests).
-target_link_options(HuiyiEngine PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
+target_link_options(HuiyiEngine PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup)
 # the dispatcher and both builds it picks from, next to the engine: a target of its own, so a rebuilt decoder is copied
 # even when the engine itself did not relink
 add_custom_target(aq_decoder_copy ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:aquadecoder>
