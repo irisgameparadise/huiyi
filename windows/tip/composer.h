@@ -84,9 +84,11 @@ public:
     void reset_session_mode() { ascii_session_ = false; }
     void set_ascii(bool ascii) { ascii_global_ = ascii; ascii_session_ = false; }   // the mode chosen from outside (the taskbar indicator)
     PanelView panel() const;
-    bool panel_visible() const { return composing() && (!sentence_mode() || choosing_); }
+    bool panel_visible() const { return composing() && (!sentence_mode() || choosing_ || whole_open_); }
     // 整句直出 (the default): the composition shows the sentence itself, as Microsoft Bopomofo does; ← → move inside it
-    // and ↓ opens the candidates for the character at the caret.  Off: the bopomofo is shown and picked from the panel.
+    // and ↓ opens the candidates for the character at the caret.  At the end of the composition ↓ or Tab opens the
+    // whole-sentence list instead, which then works as the panel does with 整句直出 off.  Off: the bopomofo is shown
+    // and picked from the panel.
     bool sentence_mode() const { return settings_.sentence_preedit; }
     // The character the candidates are for, in UTF-16 units from the composition's start (the panel lines up with it).
     bool target_span(int* offset, int* length) const;
@@ -119,7 +121,8 @@ private:
     void clear_composition();
     void backspace();
     void move(int to);
-    std::vector<std::vector<int>> pages() const { return pages_of(sentence_mode() ? pick_ : cands_); }
+    std::vector<std::vector<int>> pages() const { return pages_of(picking() ? pick_ : cands_); }
+    bool picking() const { return sentence_mode() && !whole_open_; }     // the panel is the one-character list (when it shows at all)
     static std::vector<std::vector<int>> pages_of(const std::vector<Candidate>& list);
     int page_of(int index) const;
     // 整句直出
@@ -131,7 +134,8 @@ private:
     int target() const;
     void open_pick();
     void pick(int index);
-    void close_pick() { choosing_ = false; pick_.clear(); pick_hi_ = 0; }
+    void close_pick() { choosing_ = false; pick_.clear(); pick_hi_ = 0; whole_open_ = false; }
+    bool open_whole();                                                   // the whole-sentence list, the sentence shown highlighted
     void delete_before_caret();
     Result sentence_key(const Key& k, char c, bool* handled);
     void handle_pick_line(const std::string& line);
@@ -154,6 +158,7 @@ private:
     bool single_quote_open_ = false, double_quote_open_ = false;
     // 整句直出: the caret (in characters, -1 = at the end), the characters picked by hand (by position), the list open
     int caret_ = -1; std::map<int, std::wstring> locks_;
+    bool whole_open_ = false;
     bool choosing_ = false; std::vector<Candidate> pick_; int pick_hi_ = 0, pick_k_ = 0, pick_engine_from_ = 0; uint64_t pick_gen_ = 0;
     std::string pick_client_id_; std::wstring pick_bopomofo_;
     uint64_t panel_version_ = 0;

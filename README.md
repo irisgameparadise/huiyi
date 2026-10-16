@@ -48,7 +48,9 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Huiyi\uninstall.ps1"
 | Enter | 送出整句（選單開著時：選字） |
 | Esc | 清除正在打的字（選單開著時：關閉選單） |
 | ← → ／ Home End | 在整句裡移到某個字 |
-| ↓ | 打開這個字的選單；選單裡 ↑ ↓ 移動、PgUp PgDn 翻頁、1–9／Enter／空白選字 |
+| ↓ | 游標在句尾：打開整句的選單；游標在某個字上：打開這個字的選單 |
+| Tab | 游標在句尾：打開整句的選單並跳到詞；選單開著時跳到下一組 |
+| 選單開著時 | ↑ ↓ 移動、← → 或 PgUp PgDn 翻頁、Enter／空白選定；字的選單也可以按 1–9 |
 | Backspace | 刪掉最後一個注音；游標在句中時刪掉游標前的字 |
 | 單按 Shift | 切換中／英（可在設定裡關掉） |
 | Ctrl＋空白 | Windows 內建：整個開／關中文輸入法（關閉時打英文，工作列顯示「英」）；關閉時單按 Shift 會重新打開 |

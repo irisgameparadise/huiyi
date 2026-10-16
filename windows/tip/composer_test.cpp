@@ -82,12 +82,28 @@ int main(int argc, char** argv) {
         if (at < 0) { h.committed = L"no 妳 in the list"; return; }
         c.select(at); if (h.preedit != L"妳好") { h.committed = L"preedit:" + h.preedit; return; } press(c, VK_RETURN); }, L"妳好");
     check("a pick holds while typing on", [](Composer& c, RecordingHost& h) {
-        type(c, "su3"); settle(c); press(c, VK_DOWN); settle(c); const PanelView v = c.panel(); int at = -1;
+        type(c, "su3"); settle(c); press(c, VK_LEFT); press(c, VK_DOWN); settle(c); const PanelView v = c.panel(); int at = -1;
         for (int i = 0; i < (int)v.cands->size(); i++) if ((*v.cands)[i].wtext == L"妳") at = i;
         if (at < 0) { h.committed = L"no 妳 in the list"; return; }
         c.select(at); type(c, "cl3"); settle(c); press(c, VK_RETURN); }, L"妳好");
     check("Backspace inside the sentence", [](Composer& c, RecordingHost&) { type(c, "su3cl3"); settle(c); press(c, VK_LEFT); press(c, VK_BACK); settle(c); press(c, VK_RETURN); }, L"好");
     check("Esc closes the list, Enter commits", [](Composer& c, RecordingHost&) { type(c, "rup wu0 "); settle(c); press(c, VK_DOWN); press(c, VK_ESCAPE); if (c.panel_visible()) throw 1; press(c, VK_RETURN); }, L"今天");   // (你好 is 妳好 by now: the earlier cases taught the memory)
+    check("← → turn the list's pages", [](Composer& c, RecordingHost& h) {
+        type(c, "rup wu0 "); settle(c); press(c, VK_LEFT); press(c, VK_DOWN); settle(c); const PanelView p1 = c.panel(); const int first = p1.rows.empty() ? -1 : p1.rows[0];
+        press(c, VK_RIGHT); const PanelView p2 = c.panel();
+        if (!c.panel_visible() || p2.rows.empty() || p2.rows[0] == first || p2.highlighted != p2.rows[0]) { h.committed = L"→ did not turn the page"; return; }
+        press(c, VK_LEFT); const PanelView p3 = c.panel();
+        if (!c.panel_visible() || p3.highlighted != first) { h.committed = L"← did not come back"; return; }
+        press(c, VK_ESCAPE); press(c, VK_RETURN); }, L"今天");
+    check("↓ at the end: the whole sentences", [](Composer& c, RecordingHost& h) {
+        type(c, "rup wu0 wu0 fu4cp3cl3"); settle(c); press(c, VK_DOWN); const PanelView v = c.panel();
+        if (!c.panel_visible() || !v.cands || v.highlighted < 0 || (*v.cands)[v.highlighted].wtext != L"今天天氣很好") { h.committed = L"no whole list"; return; }
+        press(c, VK_DOWN); if (c.panel().highlighted != v.highlighted + 1) { h.committed = L"↓ did not move"; return; }
+        press(c, VK_UP); press(c, VK_RETURN); }, L"今天天氣很好");
+    check("Tab at the end: the words, piece by piece", [](Composer& c, RecordingHost&) { type(c, "rup wu0 wu0 fu4cp3cl3"); settle(c); press(c, VK_TAB); press(c, VK_RETURN); settle(c); press(c, VK_RETURN); }, L"今天天氣很好");
+    check("Esc closes the whole list", [](Composer& c, RecordingHost& h) {
+        type(c, "rup wu0 "); settle(c); press(c, VK_DOWN); press(c, VK_DOWN); press(c, VK_ESCAPE);
+        if (c.panel_visible() || !c.composing()) { h.committed = L"Esc did not just close"; return; } press(c, VK_RETURN); }, L"今天");
     TerminateProcess(pi.hProcess, 0); WaitForSingleObject(pi.hProcess, 5000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     std::printf("%s\n", failed ? "FAILED" : "all passed");
     return failed ? 1 : 0;

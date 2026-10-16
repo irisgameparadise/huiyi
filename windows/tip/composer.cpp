@@ -159,7 +159,7 @@ Result Composer::key(const Key& k) {
         case VK_RETURN:
             if (k.shift) { commit_whole(); return Result::Pass; }
             if (waiting_for_current()) wait_for_answer(commit_wait_ms(raw_.size()));
-            if (sentence_mode() || !(panel_raw_ == raw_ && !cands_.empty()) || !commit_highlighted()) commit_whole();
+            if (picking() || !(panel_raw_ == raw_ && !cands_.empty()) || !commit_highlighted()) commit_whole();
             return Result::Eaten;
         default: break;
     }
@@ -172,7 +172,7 @@ Result Composer::key(const Key& k) {
         if (c == ' ' && settings_.initial_symbol && raw_.size() == 1 && std::strchr("1qaz2wsxedcrfv", raw_[0])) { commit_bopomofo(); return Result::Eaten; }
         if (c == ' ' && is_tone(raw_.back())) {                           // the syllable is complete: Space confirms, as Enter does (the next Space is a space)
             if (waiting_for_current()) wait_for_answer(commit_wait_ms(raw_.size()));
-            if (sentence_mode() || !(panel_raw_ == raw_ && !cands_.empty()) || !commit_highlighted()) commit_whole();
+            if (picking() || !(panel_raw_ == raw_ && !cands_.empty()) || !commit_highlighted()) commit_whole();
             return Result::Eaten;
         }
         if (raw_.size() >= kKeyCap && !is_tone(c)) { host_.beep(); return Result::Eaten; }
@@ -325,6 +325,7 @@ bool Composer::commit_highlighted() {
         host_.commit(c.wtext);
         if (!host_.secure_input()) record(keys, c.text);
         pieces_.push_back({c.text, keys});
+        locks_.clear(); caret_ = -1;                                      // characters picked in 整句直出 were placed in what has gone
         panel_raw_.clear(); cands_.clear(); highlighted_ = 0; begin_seq(); set_raw(rest);
         return true;
     }
@@ -387,10 +388,10 @@ std::vector<std::vector<int>> Composer::pages_of(const std::vector<Candidate>& l
 }
 int Composer::page_of(int index) const { auto ps = pages(); for (int p = 0; p < (int)ps.size(); p++) for (int i : ps[p]) if (i == index) return p; return 0; }
 void Composer::move(int to) {
-    if (sentence_mode()) { if (!pick_.empty()) { pick_hi_ = std::max(0, std::min((int)pick_.size() - 1, to)); panel_version_++; } return; }
+    if (picking()) { if (!pick_.empty()) { pick_hi_ = std::max(0, std::min((int)pick_.size() - 1, to)); panel_version_++; } return; }
     if (cands_.empty()) return; highlighted_ = std::max(0, std::min((int)cands_.size() - 1, to)); }
 void Composer::page(bool down) {
-    if (sentence_mode()) {
+    if (picking()) {
         if (!choosing_ || pick_.empty()) return;
         auto ps = pages(); const int p = page_of(pick_hi_);
         if (down) { if (p + 1 < (int)ps.size()) pick_hi_ = ps[p + 1][0]; } else pick_hi_ = p > 0 ? ps[p - 1][0] : ps[0][0];
@@ -403,7 +404,7 @@ void Composer::page(bool down) {
 }
 PanelView Composer::panel() const {
     PanelView v;
-    if (sentence_mode()) {
+    if (picking()) {
         if (!choosing_ || pick_.empty()) return v;
         v.cands = &pick_; v.highlighted = pick_hi_; auto ps = pages(); v.rows = ps[std::min((int)ps.size() - 1, page_of(pick_hi_))]; return v;
     }
@@ -412,7 +413,7 @@ PanelView Composer::panel() const {
     return v;
 }
 void Composer::select(int index) {
-    if (sentence_mode()) { pick(index); return; }
+    if (picking()) { pick(index); return; }
     if (panel_raw_ != raw_ || index < 0 || index >= (int)cands_.size()) return; highlighted_ = index; commit_highlighted(); }
 
 // ---------------------------------------------------------------- 整句直出
@@ -453,7 +454,7 @@ int Composer::chinese_slots() const {
 std::wstring Composer::sentence() const { std::wstring t; for (auto& s : slots()) t += s; return t; }
 int Composer::target() const { const int n = (int)slots().size(); if (n == 0) return 0; return std::min(caret_ < 0 ? n : caret_, n - 1); }
 bool Composer::target_span(int* offset, int* length) const {
-    if (!composing() || !sentence_mode()) return false;
+    if (!composing() || !sentence_mode() || whole_open_) return false;   // the whole-sentence list lines up with the composition
     const auto s = slots(); if (s.empty()) return false;
     const int k = std::min(choosing_ ? pick_k_ : target(), (int)s.size() - 1);
     int o = 0; for (int i = 0; i < k; i++) o += (int)s[i].size();
@@ -528,17 +529,33 @@ void Composer::delete_before_caret() {
     cands_ = std::move(cs); panel_raw_ = cands_.empty() ? std::string() : keep;
     begin_seq(); set_raw(r);
 }
+bool Composer::open_whole() {
+    if (waiting_for_current()) wait_for_answer(commit_wait_ms(raw_.size()));
+    if (panel_raw_ != raw_ || cands_.empty()) return false;
+    const Candidate* b = best_whole(); highlighted_ = b ? (int)(b - cands_.data()) : 0;
+    whole_open_ = true; panel_version_++; return true;
+}
 Result Composer::sentence_key(const Key& k, char, bool* handled) {
     *handled = true;
+    if (whole_open_) {                                                    // the whole-sentence list: its keys are the panel's
+        switch (k.vk) {
+            case VK_ESCAPE: whole_open_ = false; panel_version_++; return Result::Eaten;
+            case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT: case VK_PRIOR: case VK_NEXT: case VK_HOME: case VK_END: case VK_TAB: case VK_RETURN:
+                *handled = false; return Result::Pass;
+            case VK_SPACE: if (!raw_.empty() && is_tone(raw_.back())) { *handled = false; return Result::Pass; } break;   // Space after a tone: the highlighted one
+            default: break;
+        }
+        whole_open_ = false; panel_version_++;                            // typing on, Backspace, ...: the list closes
+    }
     if (choosing_) {
         switch (k.vk) {
             case VK_DOWN: move(pick_hi_ + 1); return Result::Eaten;
             case VK_UP: move(pick_hi_ - 1); return Result::Eaten;
-            case VK_NEXT: page(true); return Result::Eaten;
-            case VK_PRIOR: page(false); return Result::Eaten;
+            case VK_RIGHT: case VK_NEXT: page(true); return Result::Eaten;     // ← → turn the page, as on the Mac
+            case VK_LEFT: case VK_PRIOR: page(false); return Result::Eaten;
             case VK_RETURN: case VK_SPACE: pick(pick_hi_); return Result::Eaten;
             case VK_ESCAPE: case VK_BACK: close_pick(); panel_version_++; return Result::Eaten;
-            case VK_LEFT: case VK_RIGHT: case VK_HOME: case VK_END: close_pick(); panel_version_++; break;   // the list closes, the caret moves
+            case VK_HOME: case VK_END: close_pick(); panel_version_++; break;   // the list closes, the caret moves
             default:
                 if (k.vk >= '1' && k.vk <= '9' && !k.shift) {                  // while the list is open the digits pick, as in Microsoft Bopomofo
                     auto ps = pages(); const int p = page_of(pick_hi_), i = (int)(k.vk - '1');
@@ -554,8 +571,11 @@ Result Composer::sentence_key(const Key& k, char, bool* handled) {
         case VK_RIGHT: caret_ = c0 + 1 >= n ? -1 : c0 + 1; refresh_preedit(); return Result::Eaten;
         case VK_HOME: caret_ = 0; refresh_preedit(); return Result::Eaten;
         case VK_END: caret_ = -1; refresh_preedit(); return Result::Eaten;
-        case VK_DOWN: if (waiting_for_current()) wait_for_answer(commit_wait_ms(raw_.size())); open_pick(); refresh_preedit(); return Result::Eaten;
-        case VK_UP: case VK_TAB: case VK_NEXT: case VK_PRIOR: return Result::Eaten;
+        case VK_DOWN:
+            if (caret_ < 0) { open_whole(); return Result::Eaten; }      // at the end: the whole sentences
+            if (waiting_for_current()) wait_for_answer(commit_wait_ms(raw_.size())); open_pick(); refresh_preedit(); return Result::Eaten;
+        case VK_TAB: if (caret_ < 0 && !k.shift && open_whole()) { *handled = false; return Result::Pass; } return Result::Eaten;   // opens it on the next group
+        case VK_UP: case VK_NEXT: case VK_PRIOR: return Result::Eaten;
         case VK_BACK: if (c0 < n) { delete_before_caret(); return Result::Eaten; } break;   // at the end: the last syllable, as always
         default: break;
     }
